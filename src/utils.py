@@ -1,5 +1,5 @@
 """
-Code for encoding and decoding sequences.
+Utilities.
 """
 
 BASE_MAPPING = {
