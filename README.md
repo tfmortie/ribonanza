@@ -15,5 +15,5 @@ Code for Stanford Ribonanza RNA Folding Kaggle competition
 
 ### Second iteration 
 
-* Use attention-based models
+* Use transformers
 * ...
