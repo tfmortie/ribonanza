@@ -1,7 +1,6 @@
 """
-Utilities.
+Global constants and utilities.
 """
-
 BASE_MAPPING = {
     "0": "000",
     "A": "001",
@@ -9,6 +8,11 @@ BASE_MAPPING = {
     "G": "011",
     "U": "100"
 }
+
+# some consts
+R_COLS = ["reactivity_"+f"{num:04d}" for num in range(1,207)]
+RE_COLS = ["reactivity_error_"+f"{num:04d}" for num in range(1,207)]
+DATA_FOLDER = "/data/thomas_gaetan_share/kaggle/ribonanza/data/"
 
 def sequence_encoder(x):
     # first pad sequence

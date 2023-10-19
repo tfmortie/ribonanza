@@ -1,16 +1,13 @@
 """
-Selects all training sequences that pass the SN filter and that have only one occurence for both experiment types.
+Code for extracting data.
 """
 import pandas as pd
+from utils import DATA_FOLDER
 
-# some consts
-N=100000
-WINDOW=10
-R_COLS = ["reactivity_"+f"{num:04d}" for num in range(1,207)]
-RE_COLS = ["reactivity_error_"+f"{num:04d}" for num in range(1,207)]
-DATA_FOLDER = "/data/thomas_gaetan_share/kaggle/ribonanza/data/"
-
-def seqidcleanoverlap():
+"""
+Selects all training sequences that pass the SN filter and that have only one occurence for both experiment types.
+"""
+def get_data_seqidcleanoverlap():
     print("Reading in training data...")
     train_data = pd.read_csv(DATA_FOLDER+"train_data.csv")
     print("Done!")
@@ -36,10 +33,12 @@ def seqidcleanoverlap():
     train_data_2A3_N = train_data_2A3_overlap.loc[train_data_2A3_overlap.sequence_id.isin(seq_id_clean_overlap_N_2A3),:]
     train_data_DMS_N = train_data_DMS_overlap.loc[train_data_DMS_overlap.sequence_id.isin(seq_id_clean_overlap_N_DMS),:]
     print("Done!")
-    print(train_data_2A3_1.shape)
-    print(train_data_DMS_1.shape)
-    print(train_data_2A3_N.shape)
-    print(train_data_DMS_N.shape)
+    print("Writing to csv...")
+    train_data_2A3_1.to_csv(DATA_FOLDER+"train_data_2A3_1.csv", index=False)
+    train_data_DMS_1.to_csv(DATA_FOLDER+"train_data_DMS_1.csv", index=False)
+    train_data_2A3_N.to_csv(DATA_FOLDER+"train_data_2A3_N.csv", index=False)
+    train_data_DMS_N.to_csv(DATA_FOLDER+"train_data_DMS_N.csv", index=False)
+    print("Done!")
 
 if __name__ == "__main__":
-    seqidcleanoverlap()
+    get_data_seqidcleanoverlap()
