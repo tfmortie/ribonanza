@@ -25,7 +25,7 @@ def train_mtm(args):
     mtmseq_data = MTMSequenceDataset(data.sequence, data.loc[:,R_COLS], 206)
     train_loader = utils.data.DataLoader(mtmseq_data, batch_size=args.batchsize, shuffle=True, num_workers=args.numworkers)
     # train
-    trainer = pl.Trainer(limit_train_batches=args.maxbratio, max_epochs=args.nepochs)
+    trainer = pl.Trainer(limit_train_batches=args.maxbratio, max_epochs=args.nepochs, devices=args.numdevices)
     trainer.fit(model=mtm_model, train_dataloaders=train_loader)
 
 TRAIN_MODEL = {
@@ -45,7 +45,8 @@ if __name__ == "__main__":
     parser.add_argument("-nepochs", "--nepochs", type=int, default=100, help="number of epochs")
     parser.add_argument("-bs", "--batchsize", type=int, default=32, help="batch size")
     parser.add_argument("-lr", "--learnrate", type=float, default=0.01, help="learning rate")
-    parser.add_argument("-nw", "--numworkers", type=int, default=3, help="learning rate")
+    parser.add_argument("-nw", "--numworkers", type=int, default=3, help="number of workers")
+    parser.add_argument("-nd", "--numdevices", type=int, default=1, help="number of devices") # currently set to one due to memory leaks (TODO solve)
     """ logging """
     parser.add_argument("-out", "--out", type=str, default="my_model.pt", help="filename of stored model")
     parser.add_argument("-v", "--verbose", type=int, default=1, help="verbose param")

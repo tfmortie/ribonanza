@@ -1,9 +1,11 @@
 """
 Code containing different model architectures and corresponding Lightning modules.
 """
+import torch
 import lightning.pytorch as pl
 
 from torch import optim, nn
+from utils import mse_loss
 
 class MTM(nn.Module):
     def __init__(self, embedding_dim, n_hidden1, n_hidden2, n_out):
@@ -35,12 +37,8 @@ class MTMModel(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         x, y, m = batch
-        z = self.model(x)
-        # mask out predictions and targets based
-        z = z*m
-        y = y*m
-        loss = nn.functional.mse_loss(z, y)
-        # Logging to TensorBoard (if installed) by default
+        z = self.model(x) 
+        loss = mse_loss(z, y, reduction="mean")
         self.log("train_loss", loss)
         return loss
 
