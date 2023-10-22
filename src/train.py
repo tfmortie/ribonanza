@@ -2,15 +2,16 @@
 Code for training and evaluating different models.
 """
 import argparse
+import torch
 
 import pandas as pd
 import lightning.pytorch as pl
 
+from torch import utils
+
 from utils import DATA_FOLDER, R_COLS
 from model import MTM, MTMModel
 from preprocessing import MTMSequenceDataset
-
-from torch import utils
 
 def train_mtm(args):
     # read in data
@@ -23,10 +24,14 @@ def train_mtm(args):
     mtm_model = MTMModel(mtm_arch)
     # create dataset and dataloaders
     mtmseq_data = MTMSequenceDataset(data.sequence, data.loc[:,R_COLS], 206)
-    train_loader = utils.data.DataLoader(mtmseq_data, batch_size=args.batchsize, shuffle=True, num_workers=args.numworkers)
+    # create generator
+    mtmseq_train_set, mtmseq_val_set = torch.utils.data.random_split(mtmseq_data, [0.8, 0.2], generator = torch.Generator().manual_seed(args.seed))
+    # and split in training and validation
+    train_loader = utils.data.DataLoader(mtmseq_train_set, batch_size=args.batchsize, shuffle=True, num_workers=args.numworkers)
+    val_loader = utils.data.DataLoader(mtmseq_val_set, batch_size=args.batchsize, shuffle=False, num_workers=args.numworkers)
     # train
     trainer = pl.Trainer(limit_train_batches=args.maxbratio, max_epochs=args.nepochs, devices=args.numdevices)
-    trainer.fit(model=mtm_model, train_dataloaders=train_loader)
+    trainer.fit(model=mtm_model, train_dataloaders=train_loader, val_dataloaders=val_loader)
 
 TRAIN_MODEL = {
     "mtm": train_mtm,
@@ -50,5 +55,7 @@ if __name__ == "__main__":
     """ logging """
     parser.add_argument("-out", "--out", type=str, default="my_model.pt", help="filename of stored model")
     parser.add_argument("-v", "--verbose", type=int, default=1, help="verbose param")
+    """ other """
+    parser.add_argument("-s", "--seed", type=int, default=2023, help="seed for rng")
     args = parser.parse_args()
     TRAIN_MODEL[args.model](args)

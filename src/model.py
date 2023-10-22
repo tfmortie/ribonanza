@@ -34,12 +34,19 @@ class MTMModel(pl.LightningModule):
     def __init__(self, model):
         super().__init__()
         self.model = model
-
+    
     def training_step(self, batch, batch_idx):
         x, y, m = batch
         z = self.model(x) 
         loss = mse_loss(z, y, reduction="mean")
         self.log("train_loss", loss)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        x, y, m = batch
+        z = self.model(x) 
+        loss = mse_loss(z, y, reduction="mean")
+        self.log("val_loss", loss)
         return loss
 
     def configure_optimizers(self):
