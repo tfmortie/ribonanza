@@ -5,7 +5,7 @@ import torch
 import lightning.pytorch as pl
 
 from torch import optim, nn
-from utils import mse_loss
+from utils import masked_mse_loss, masked_mae
 
 class MTM(nn.Module):
     def __init__(self, embedding_dim, n_hidden1, n_hidden2, n_out):
@@ -38,15 +38,17 @@ class MTMModel(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y, m = batch
         z = self.model(x) 
-        loss = mse_loss(z, y, reduction="mean")
+        loss = masked_mse_loss(z, y, reduction="mean")
         self.log("train_loss", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y, m = batch
         z = self.model(x) 
-        loss = mse_loss(z, y, reduction="mean")
+        loss = masked_mse_loss(z, y, reduction="mean")
+        mae = masked_mae(z, y, reduction="mean") 
         self.log("val_loss", loss)
+        self.log("val_mae", mae)
         return loss
 
     def configure_optimizers(self):

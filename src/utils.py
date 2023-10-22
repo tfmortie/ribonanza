@@ -16,9 +16,20 @@ R_COLS = ["reactivity_"+f"{num:04d}" for num in range(1,207)]
 RE_COLS = ["reactivity_error_"+f"{num:04d}" for num in range(1,207)]
 DATA_FOLDER = "/data/thomas_gaetan_share/kaggle/ribonanza/data/"
 
-def mse_loss(input, target, reduction):
+def masked_mse_loss(input, target, reduction):
     mask = torch.isnan(target)
     out = (input[~mask]-target[~mask])**2
+    if reduction == "mean":
+        return out.mean()
+    elif reduction == "None":
+        return out
+    
+def masked_mae(input, target, reduction):
+    mask = torch.isnan(target)
+    # clip targets
+    target_raw = torch.clip(target[~mask], 0, 1)
+    # calculate MAE
+    out = torch.abs(input[~mask]-target_raw)
     if reduction == "mean":
         return out.mean()
     elif reduction == "None":
