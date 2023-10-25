@@ -18,7 +18,8 @@ class MTM(nn.Module):
             nn.Linear(n_hidden1, n_hidden2),
             nn.ReLU(),
             nn.BatchNorm1d(n_hidden2),
-            nn.Linear(n_hidden2, n_out)
+            nn.Linear(n_hidden2, n_out),
+            nn.ReLU()
         )
         # ok as long as we don't have high-capacity models
         self.double()
@@ -40,6 +41,7 @@ class MTMModel(pl.LightningModule):
         z = self.model(x) 
         loss = masked_mse_loss(z, y, reduction="mean")
         self.log("train_loss", loss)
+
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -49,6 +51,7 @@ class MTMModel(pl.LightningModule):
         mae = masked_mae(z, y, reduction="mean") 
         self.log("val_loss", loss)
         self.log("val_mae", mae)
+
         return loss
 
     def configure_optimizers(self):

@@ -1,3 +1,4 @@
 *.ipynb
 *.pyc
 src/lightning_logs/*
+*.ckpt
