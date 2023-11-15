@@ -17,6 +17,7 @@ Code for Stanford Ribonanza RNA Folding Kaggle competition
 * Use transformers
 
 
+<<<<<<< HEAD
 #### AB tests brainstorm 15/11
 - [ ] data = split
 - [ ] mse vs mae als loss
@@ -25,6 +26,9 @@ Code for Stanford Ribonanza RNA Folding Kaggle competition
 - [ ] multi-output regression or 2 sep models
 - [ ] DNA language model pre-training or not
 - [ ] 
+=======
+
+>>>>>>> 0356b5e53efa22a8821477cb883483fe4c4981dd
 
 #### Gaetan's notes
 
