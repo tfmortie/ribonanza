@@ -194,7 +194,7 @@ class MTMModel(pl.LightningModule):
         self.lr = lr
     
     def training_step(self, batch, batch_idx):
-        x, y, m = batch
+        x, y, ye, m = batch # x: sequence, y: reactivity, ye: reactivity error, m: mask
         x = x.long()
         y = y.to(self.dtype) # this is my trick to allow for any precision training in lightning
 
@@ -205,7 +205,7 @@ class MTMModel(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        x, y, m = batch
+        x, y, ye, m = batch # x: sequence, y: reactivity, ye: reactivity error, m: mask
         x = x.long()
         y = y.to(self.dtype)
 

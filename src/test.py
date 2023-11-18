@@ -21,7 +21,7 @@ def test_mtm(args):
     # init our mtm model
     mtm_arch = MTM(args.embeddingsize, args.mtmhidden1, args.mtmhidden2, args.seqlen)
     # create dataset and dataloaders
-    mtmseq_data = MTMSequenceDataset(data.sequence, None, args.seqlen)
+    mtmseq_data = MTMSequenceDataset(data.sequence, None, None, args.seqlen)
     test_loader = DataLoader(mtmseq_data, batch_size=args.batchsize, shuffle=False, num_workers=args.numworkers)
     # init the our mtm model
     model = MTMModel.load_from_checkpoint(args.modelpath, model=mtm_arch)
@@ -48,7 +48,7 @@ def test_conv(args):
     # init our mtm model
     mtm_arch = Conv1DBaseline(args.embeddingsize, args.n_layers)
     # create dataset and dataloaders
-    mtmseq_data = MTMSequenceDataset(data.sequence, None, args.seqlen)
+    mtmseq_data = MTMSequenceDataset(data.sequence, None, None, args.seqlen)
     test_loader = DataLoader(mtmseq_data, batch_size=args.batchsize, shuffle=False, num_workers=args.numworkers)
     # init the our mtm model
     model = MTMModel.load_from_checkpoint(args.modelpath, model=mtm_arch)

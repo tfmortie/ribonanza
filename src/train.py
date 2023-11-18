@@ -8,26 +8,32 @@ import pandas as pd
 import lightning.pytorch as pl
 
 from torch import utils
+from torch.utils.data.sampler import SubsetRandomSampler
 
-from utils import DATA_FOLDER, R_COLS
+from utils import DATA_FOLDER, R_COLS, RE_COLS
 from model import MTM, Conv1DBaseline, MTMModel
-from preprocessing import MTMSequenceDataset
+from preprocessing import MTMSequenceDataset, random_split
+
 
 def train_mtm(args):
     # read in data
     print("Reading in data")
-    data = pd.read_csv(DATA_FOLDER+args.data)
+    df_list = []
+    for f in args.data:
+        df_list.append(pd.read_csv(DATA_FOLDER+f))
+    data = pd.concat(df_list)
     print("Done!")
     # init our mtm model
     mtm_arch = MTM(args.embeddingsize, args.mtmhidden1, args.mtmhidden2, args.seqlen)
     # init the our mtm model
     mtm_model = MTMModel(mtm_arch)
     # create dataset and dataloaders
-    mtmseq_data = MTMSequenceDataset(data.sequence, data.loc[:,R_COLS], args.seqlen)
-    # create generator
-    mtmseq_train_set, mtmseq_val_set = torch.utils.data.random_split(mtmseq_data, [1-args.valratio, args.valratio], generator = torch.Generator().manual_seed(args.seed))
+    mtmseq_data = MTMSequenceDataset(data.sequence, data.loc[:,R_COLS], data.loc[:,RE_COLS], args.seqlen)
+    # get splits
+    train_idx, val_idx = random_split(data, args.valratio, seed=args.seed) 
+    mtmseq_train_set, mtmseq_val_set = torch.utils.data.Subset(mtmseq_data, train_idx), torch.utils.data.Subset(mtmseq_data, val_idx)
     # and split in training and validation
-    train_loader = utils.data.DataLoader(mtmseq_train_set, batch_size=args.batchsize, shuffle=True, num_workers=args.numworkers)
+    train_loader = utils.data.DataLoader(mtmseq_train_set, batch_size=args.batchsize, shuffle=False, num_workers=args.numworkers)
     val_loader = utils.data.DataLoader(mtmseq_val_set, batch_size=args.batchsize, shuffle=False, num_workers=args.numworkers)
     # train
     print("Start training model...")
@@ -40,18 +46,22 @@ def train_mtm(args):
 def train_conv(args):
     # read in data
     print("Reading in data")
-    data = pd.read_csv(DATA_FOLDER+args.data)
+    df_list = []
+    for f in args.data:
+        df_list.append(pd.read_csv(DATA_FOLDER+f))
+    data = pd.concat(df_list)
     print("Done!")
     # init our mtm model
     mtm_arch = Conv1DBaseline(args.embeddingsize, args.n_layers)
     # init the our mtm model
     mtm_model = MTMModel(mtm_arch, lr = args.learningrate)
     # create dataset and dataloaders
-    mtmseq_data = MTMSequenceDataset(data.sequence, data.loc[:,R_COLS], args.seqlen)
-    # create generator
-    mtmseq_train_set, mtmseq_val_set = torch.utils.data.random_split(mtmseq_data, [1-args.valratio, args.valratio], generator = torch.Generator().manual_seed(args.seed))
-    # and split in training and validation
-    train_loader = utils.data.DataLoader(mtmseq_train_set, batch_size=args.batchsize, shuffle=True, num_workers=args.numworkers)
+    mtmseq_data = MTMSequenceDataset(data.sequence, data.loc[:,R_COLS], data.loc[:,RE_COLS], args.seqlen)
+    # get splits
+    train_idx, val_idx = random_split(data, args.valratio, seed=args.seed)
+    mtmseq_train_set, mtmseq_val_set = torch.utils.data.Subset(mtmseq_data, train_idx), torch.utils.data.Subset(mtmseq_data, val_idx)
+    # and create dataloaders
+    train_loader = utils.data.DataLoader(mtmseq_train_set, batch_size=args.batchsize, shuffle=False, num_workers=args.numworkers)
     val_loader = utils.data.DataLoader(mtmseq_val_set, batch_size=args.batchsize, shuffle=False, num_workers=args.numworkers)
     # train
     print("Start training model...")
@@ -69,7 +79,7 @@ TRAIN_MODEL = {
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Training code')
     """ model and data params """
-    parser.add_argument("-d", "--data", type=str, required=True, help="filename of dataset")
+    parser.add_argument("-d", "--data", type=str, required=True, nargs='+', help="filename(s) of dataset")
     parser.add_argument("-m", "--model", type=str, default="mtm", choices=["mtm", "conv"], help="model of interest")
     parser.add_argument("-embs", "--embeddingsize", type=int, default=3, help="size of embeddings")
     parser.add_argument("-mtmh1", "--mtmhidden1", type=int, default=64, help="size of first hidden layer for MTM model")
