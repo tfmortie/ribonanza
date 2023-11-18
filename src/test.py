@@ -31,7 +31,6 @@ def test_mtm(args):
     preds = [] 
     for i, (batch_seq, _, batch_mask) in tqdm(enumerate(test_loader)):
         batch_seq = batch_seq.long()
-        batch_mask = batch_mask.to(model.dtype)
     
         out = model.model(batch_seq)
         preds.extend(list(out[batch_mask].detach().numpy()))
@@ -54,14 +53,14 @@ def test_conv(args):
     model = MTMModel.load_from_checkpoint(args.modelpath, model=mtm_arch)
     # put in evaluation mode
     print("Start calculating predictions...")
-    model.eval()
-    preds = [] 
-    for i, (batch_seq, _, batch_mask) in tqdm(enumerate(test_loader)):
-        batch_seq = batch_seq.to(model.dtype)
-        batch_mask = batch_mask.to(model.dtype)
+    model.eval().to("cuda:%s" % args.device)
+    preds = []
+    with torch.no_grad():
+        for i, (batch_seq, _, batch_mask) in tqdm(enumerate(test_loader)):
+            batch_seq = batch_seq.long().to("cuda:%s" % args.device)
 
-        out = model.model(batch_seq)
-        preds.extend(list(out[batch_mask].detach().numpy()))
+            out = model.model(batch_seq)
+            preds.extend(list(out[batch_mask].detach().cpu().numpy()))
     print(len(preds))
     out_df = pd.DataFrame({"Pred": preds})
     out_df.to_csv("./"+args.out+".csv")
@@ -85,6 +84,7 @@ if __name__ == "__main__":
     parser.add_argument("-nl", "--n_layers", type=int, default=10, help="number of layers in conv baseline")
     parser.add_argument("-bs", "--batchsize", type=int, default=32, help="batch size")
     parser.add_argument("-nw", "--numworkers", type=int, default=3, help="number of workers")
+    parser.add_argument("-dev", "--device", type=int, default=1, help="gpu device to use")
     """ logging """
     parser.add_argument("-out", "--out", type=str, default="submission",help="filename for predictions")
     parser.add_argument("-v", "--verbose", type=int, default=1, help="verbose param")
