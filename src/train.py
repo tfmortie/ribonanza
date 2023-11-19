@@ -10,7 +10,7 @@ import lightning.pytorch as pl
 from torch import utils
 from torch.utils.data.sampler import SubsetRandomSampler
 
-from utils import DATA_FOLDER, R_COLS, RE_COLS
+from utils import LOSS_MAPPING, DATA_FOLDER, R_COLS, RE_COLS
 from model import MTM, Conv1DBaseline, MTMModel
 from preprocessing import MTMSequenceDataset, random_split
 
@@ -26,7 +26,7 @@ def train_mtm(args):
     # init our mtm model
     mtm_arch = MTM(args.embeddingsize, args.mtmhidden1, args.mtmhidden2, args.seqlen)
     # init the our mtm model
-    mtm_model = MTMModel(mtm_arch)
+    mtm_model = MTMModel(mtm_arch, LOSS_MAPPING[args.loss])
     # create dataset and dataloaders
     mtmseq_data = MTMSequenceDataset(data.sequence, data.loc[:,R_COLS], data.loc[:,RE_COLS], args.seqlen)
     # get splits
@@ -54,7 +54,7 @@ def train_conv(args):
     # init our mtm model
     mtm_arch = Conv1DBaseline(args.embeddingsize, args.n_layers)
     # init the our mtm model
-    mtm_model = MTMModel(mtm_arch, lr = args.learningrate)
+    mtm_model = MTMModel(mtm_arch, LOSS_MAPPING[args.loss], lr = args.learningrate)
     # create dataset and dataloaders
     mtmseq_data = MTMSequenceDataset(data.sequence, data.loc[:,R_COLS], data.loc[:,RE_COLS], args.seqlen)
     # get splits
@@ -92,6 +92,7 @@ if __name__ == "__main__":
     parser.add_argument("-ne", "--nepochs", type=int, default=100, help="number of epochs")
     parser.add_argument("-bs", "--batchsize", type=int, default=32, help="batch size")
     parser.add_argument("-nw", "--numworkers", type=int, default=3, help="number of workers")
+    parser.add_argument("-lo", "--loss", type=str, default="mmse", choices=["wmmse", "mmse"], help="loss of interest")
     parser.add_argument("-lr", "--learningrate", type=float, default=1e-5, help="learning rate")
     parser.add_argument("-dev", "--device", type=int, default=1, help="which gpu device to use")
     """ logging """

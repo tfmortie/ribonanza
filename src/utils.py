@@ -23,7 +23,15 @@ def masked_mse_loss(input, target, reduction):
         return out.mean()
     elif reduction == "None":
         return out
-    
+
+def weighted_masked_mse_loss(input, target, weight, reduction):
+    mask = torch.isnan(target)
+    out = weight[~mask]*(input[~mask]-target[~mask])**2
+    if reduction == "mean":
+        return out.mean()
+    elif reduction == "None":
+        return out
+ 
 def masked_mae(input, target, reduction):
     mask = torch.isnan(target)
     # clip targets
@@ -34,6 +42,11 @@ def masked_mae(input, target, reduction):
         return out.mean()
     elif reduction == "None":
         return out
+
+LOSS_MAPPING = {
+    "wmmse": weighted_masked_mse_loss,
+    "mmse": masked_mse_loss
+}
 
 def sequence_encoder(x):
     # first pad sequence

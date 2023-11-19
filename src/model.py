@@ -5,7 +5,7 @@ import torch
 import lightning.pytorch as pl
 
 from torch import optim, nn
-from utils import masked_mse_loss, masked_mae
+from utils import masked_mae, masked_mse_loss
 
 class MTM(nn.Module):
     def __init__(self, embedding_dim, n_hidden1, n_hidden2, n_out):
@@ -188,9 +188,10 @@ class Conv1DBaseline(nn.Module):
         return o
 
 class MTMModel(pl.LightningModule):
-    def __init__(self, model, lr = 1e-5):
+    def __init__(self, model, loss = masked_mse_loss, lr = 1e-5):
         super().__init__()
         self.model = model
+        self.loss = loss
         self.lr = lr
     
     def training_step(self, batch, batch_idx):
@@ -199,7 +200,10 @@ class MTMModel(pl.LightningModule):
         y = y.to(self.dtype) # this is my trick to allow for any precision training in lightning
 
         z = self.model(x) 
-        loss = masked_mse_loss(z, y, reduction="mean")
+        if "weighted" in self.loss.__name__:
+            loss = self.loss(z, y, ye, reduction="mean")
+        else:
+            loss = self.loss(z, y, reduction="mean")
         self.log("train_loss", loss)
 
         return loss
@@ -210,7 +214,10 @@ class MTMModel(pl.LightningModule):
         y = y.to(self.dtype)
 
         z = self.model(x) 
-        loss = masked_mse_loss(z, y, reduction="mean")
+        if "weighted" in self.loss.__name__:
+            loss = self.loss(z, y, ye, reduction="mean")
+        else:
+            loss = self.loss(z, y, reduction="mean")
         mae = masked_mae(z, y, reduction="mean") 
         self.log("val_loss", loss)
         self.log("val_mae", mae)

@@ -9,7 +9,7 @@ import pandas as pd
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from utils import DATA_FOLDER
+from utils import LOSS_MAPPING, DATA_FOLDER
 from model import MTM, MTMModel, Conv1DBaseline
 from preprocessing import MTMSequenceDataset
 
@@ -29,9 +29,8 @@ def test_mtm(args):
     print("Start calculating predictions...")
     model.eval()
     preds = [] 
-    for i, (batch_seq, _, batch_mask) in tqdm(enumerate(test_loader)):
-        batch_seq = batch_seq.long()
-    
+    for i, (batch_seq, _, _, batch_mask) in tqdm(enumerate(test_loader)):
+        batch_seq = batch_seq.long() 
         out = model.model(batch_seq)
         preds.extend(list(out[batch_mask].detach().numpy()))
     print(len(preds))
@@ -56,9 +55,8 @@ def test_conv(args):
     model.eval().to("cuda:%s" % args.device)
     preds = []
     with torch.no_grad():
-        for i, (batch_seq, _, batch_mask) in tqdm(enumerate(test_loader)):
+        for i, (batch_seq, _, _, batch_mask) in tqdm(enumerate(test_loader)):
             batch_seq = batch_seq.long().to("cuda:%s" % args.device)
-
             out = model.model(batch_seq)
             preds.extend(list(out[batch_mask].detach().cpu().numpy()))
     print(len(preds))
