@@ -1,66 +1,106 @@
-"""
-Code for preprocessing data.
-"""
-import torch
+import pandas as pd
+import os
 import numpy as np
-from torch.utils.data import Dataset
+import h5torch
+import sys
+"""
+Script to generate h5torch file for train dataset.
+"""
 
-class MTMSequenceDataset(Dataset):
-    def __init__(self, sequences, reactivity=None, reactivitye=None, n_out=457):
-        self.sequences = sequences
-        self.reactivity = reactivity
-        self.reactivity_error = reactivitye
-        self.n_out = n_out
+train_data_file = sys.argv[1] # e.g. "./data/train_data_new.csv"
+bpp_folder = sys.argv[2] # e.g. "./data/Ribonanza_bpp_files/extra_data/"
+train_data_output_file = sys.argv[3] # e.g. "./data/train.h5t"
 
-    def __len__(self):
-        return len(self.sequences)
+data = pd.read_csv(train_data_file)
 
-    def __getitem__(self, idx):
-        # convert sequence
-        sequence = self.sequences.iloc[idx].ljust(self.n_out, "0")
-        char_to_idx = {"0": 0, "A": 1, "C": 2, "G": 2, "U": 3} 
-        sequence_numeric = [char_to_idx[char] for char in sequence]
-        sequence_tensor = torch.tensor(sequence_numeric)
-        # just process sequences in case of test phase
-        if self.reactivity is not None:
-            # convert reactivity tensors
-            reactivity_tensor = torch.tensor(np.concatenate([self.reactivity.iloc[idx,:],np.array([np.nan]*(self.n_out-len(self.reactivity.iloc[idx,:])))]))
-            reactivity_error_tensor = torch.tensor(np.concatenate([self.reactivity_error.iloc[idx,:],np.array([np.nan]*(self.n_out-len(self.reactivity_error.iloc[idx,:])))]))
-            # calculate mask tensor 
-            mask_tensor = torch.tensor(np.array(~self.reactivity.iloc[idx,:].isna()))
+data_2A3 = data[data["experiment_type"] == "2A3_MaP"]
+data_DMS = data[data["experiment_type"] == "DMS_MaP"]
 
-            return sequence_tensor, reactivity_tensor, reactivity_error_tensor, mask_tensor
-        else:
-            # calculate mask tensor
-            mask_tensor = (sequence_tensor!=0)
-        
-            return sequence_tensor, torch.tensor([]), torch.tensor([]), mask_tensor
+bpp_files = {}
+for (dirpath, dirnames, filenames) in os.walk(bpp_folder):
+    for file in filenames:
+        #print(dirpath, dirnames, file)
+        bpp_files[file.rstrip(".txt")] = os.path.join(dirpath, file)
 
-def random_split(data, val_ratio=0.2, seed=2023):
-    train_idx, val_idx = [], []
-    # extract subset of data that contains non-unique sequences
-    data_nu_idx = list(np.arange(len(data))[data['sequence_id'].duplicated(keep=False)])
-    data_nu = data.loc[data['sequence_id'].duplicated(keep=False),:]
-    # extract subset of data that contains unique sequences
-    data_u_idx = list(np.arange(len(data))[~data['sequence_id'].duplicated(keep=False)])
-    data_u = data.loc[~data['sequence_id'].duplicated(keep=False),:]
-    # update index 
-    data_nu.index = data_nu_idx 
-    data_u.index = data_u_idx 
-    # split data_u in two parts based on val_ratio
-    shuffled_data_u = data_u.sample(frac=1, random_state=seed) 
-    split_index_data_u = int(len(shuffled_data_u) * val_ratio)
-    # add idx to lists
-    val_idx.extend(list(shuffled_data_u.iloc[:split_index_data_u].index))
-    train_idx.extend(list(shuffled_data_u.iloc[split_index_data_u:].index))
-    # split data_nu in two deterministic parts based on ordered signal_to_noise
-    # sort first 
-    data_nu_sorted = data_nu.sort_values(by=['sequence_id', 'signal_to_noise'], ascending=[True, True])
-    for idx in data_nu_sorted.sequence_id.unique():
-        idx_subset = data_nu_sorted.loc[data_nu_sorted.sequence_id==idx,:]
-        # just conside a 50/50 deterministic split
-        split_index_subset = int(len(idx_subset)*0.5)
-        train_idx.extend(list(idx_subset.iloc[:split_index_subset].index))
-        val_idx.extend(list(idx_subset.iloc[split_index_subset:].index))
+nucleotide_mapper = {"0": 0, "A": 1, "C": 2, "G": 3, "U": 4}
 
-    return train_idx, val_idx
+
+# generate dataset objects:
+ids = []
+sequences = []
+s_to_n_2A3 = []
+s_to_n_DMS = []
+sn_filter_2A3 = []
+sn_filter_DMS = []
+reactivity_2A3 = []
+reactivity_DMS = []
+reactivity_error_2A3 = []
+reactivity_error_DMS = []
+bpp_c1 = []
+bpp_c2 = []
+bpp_o = []
+for ix in range(len(data_2A3)):
+    s_2A3, s_DMS = data_2A3.iloc[ix], data_DMS.iloc[ix]
+
+    id1, id2 = s_2A3["sequence_id"], s_DMS["sequence_id"]
+    if id1 != id2:
+        print("UNEXPECTED ERROR %s" % id1)
+    
+    ids.append(id1)
+
+    # sequence encoded
+    sequence_encoded = np.array([nucleotide_mapper[s] for s in s_2A3["sequence"]]).astype("int8")
+    sequences.append(sequence_encoded)
+
+    # metadata
+    s_to_n_2A3.append(s_2A3["signal_to_noise"])
+    s_to_n_DMS.append(s_DMS["signal_to_noise"])
+
+    sn_filter_2A3.append(s_2A3["SN_filter"])
+    sn_filter_DMS.append(s_DMS["SN_filter"])
+    
+    # reactivity and error
+    reactivity_2A3_s = s_2A3[["reactivity_%04d" % (i+1) for i in range(206)]].values.astype("float32")
+    reactivity_error_2A3_s = s_2A3[["reactivity_error_%04d" % (i+1) for i in range(206)]].values.astype("float32")
+
+    reactivity_DMS_s = s_DMS[["reactivity_%04d" % (i+1) for i in range(206)]].values.astype("float32")
+    reactivity_error_DMS_s = s_DMS[["reactivity_error_%04d" % (i+1) for i in range(206)]].values.astype("float32")
+
+    reactivity_2A3.append(reactivity_2A3_s)
+    reactivity_DMS.append(reactivity_DMS_s)
+    reactivity_error_2A3.append(reactivity_error_2A3_s)
+    reactivity_error_DMS.append(reactivity_error_DMS_s)
+
+    # base pairing prob file loading into coordinate 1, coordinate 2, and output
+    c1, c2, o = np.split(np.loadtxt(bpp_files[s_2A3["sequence_id"]]), 3, axis=1)
+    c1, c2, o = c1.astype("int16")[:, 0], c2.astype("int16")[:, 0], o.astype("float16")[:, 0]
+    bpp_c1.append(c1)
+    bpp_c2.append(c2)
+    bpp_o.append(o)
+
+    if (ix+1) % 5000 == 0:
+        print(ix, flush = True)
+
+# train data h5torch file creation.
+f = h5torch.File(train_data_output_file, "w")
+f.register(np.array(ids), "central", dtype_save="bytes", dtype_load="str")
+
+f.register(sequences, axis = 0, name = "sequences", mode = "vlen", dtype_save="int8", dtype_load="int64")
+f.register(reactivity_2A3, axis = 0, name = "reactivity_2A3", mode = "vlen", dtype_save="float32", dtype_load="float32")
+f.register(reactivity_DMS, axis = 0, name = "reactivity_DMS", mode = "vlen", dtype_save="float32", dtype_load="float32")
+f.register(reactivity_error_2A3, axis = 0, name = "reactivity_error_2A3", mode = "vlen", dtype_save="float32", dtype_load="float32")
+f.register(reactivity_error_DMS, axis = 0, name = "reactivity_error_DMS", mode = "vlen", dtype_save="float32", dtype_load="float32")
+
+f.register(np.array(s_to_n_2A3), axis = 0, name = "s_to_n_2A3", mode = "N-D", dtype_save="float32", dtype_load="float32")
+f.register(np.array(s_to_n_DMS), axis = 0, name = "s_to_n_DMS", mode = "N-D", dtype_save="float32", dtype_load="float32")
+f.register(np.array(sn_filter_2A3), axis = 0, name = "sn_filter_2A3", mode = "N-D", dtype_save="bool", dtype_load="bool")
+f.register(np.array(sn_filter_DMS), axis = 0, name = "sn_filter_DMS", mode = "N-D", dtype_save="bool", dtype_load="bool")
+
+f.register(bpp_c1, axis = 0, name = "bpp_c1", mode = "vlen", dtype_save="int16", dtype_load="int16")
+f.register(bpp_c2, axis = 0, name = "bpp_c2", mode = "vlen", dtype_save="int16", dtype_load="int16")
+f.register(bpp_o, axis = 0, name = "bpp_o", mode = "vlen", dtype_save="float16", dtype_load="float32")
+
+split = np.random.choice(np.arange(20), size = (len(sequences), ))
+f.register(split, axis = 0, name = "split", dtype_save="int8", dtype_load="int8")
+
+f.close()

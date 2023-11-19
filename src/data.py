@@ -1,44 +1,121 @@
+import h5torch
+import numpy as np
+from lightning import LightningDataModule
+import torch
 """
-Code for extracting data.
+Data utilities to use in training scripts
 """
-import pandas as pd
-from utils import DATA_FOLDER
 
-"""
-Selects all training sequences that pass the SN filter and that have only one occurence for both experiment types.
-"""
-def get_data_seqidcleanoverlap():
-    print("Reading in training data...")
-    train_data = pd.read_csv(DATA_FOLDER+"train_data.csv")
-    print("Done!")
-    print("Transform data...")
-    # filter clean samples
-    train_data_clean = train_data.loc[train_data.SN_filter==1,:]
-    # split data based on experiment type
-    train_data_2A3 = train_data_clean.loc[train_data_clean.experiment_type=="2A3_MaP",:]
-    train_data_DMS = train_data_clean.loc[train_data_clean.experiment_type=="DMS_MaP",:]
-    # get intersection wrt sequence_id
-    seq_id_clean_overlap = set(train_data_2A3.sequence_id).intersection(train_data_DMS.sequence_id)
-    # and subset data accordingly
-    train_data_2A3_overlap = train_data_2A3.loc[train_data_2A3.sequence_id.isin(seq_id_clean_overlap),:]
-    train_data_DMS_overlap = train_data_DMS.loc[train_data_DMS.sequence_id.isin(seq_id_clean_overlap),:]
-    # now pick sequences that only occur ones in both experiment types
-    seq_id_clean_overlap_1_2A3 = set(train_data_2A3_overlap.sequence_id.value_counts()[train_data_2A3_overlap.sequence_id.value_counts()==1].index)
-    seq_id_clean_overlap_1_DMS = set(train_data_DMS_overlap.sequence_id.value_counts()[train_data_DMS_overlap.sequence_id.value_counts()==1].index) 
-    seq_id_clean_overlap_N_2A3 = set(train_data_2A3_overlap.sequence_id.value_counts()[train_data_2A3_overlap.sequence_id.value_counts()>1].index)
-    seq_id_clean_overlap_N_DMS = set(train_data_DMS_overlap.sequence_id.value_counts()[train_data_DMS_overlap.sequence_id.value_counts()>1].index) 
-    seq_id_clean_overlap_1 = seq_id_clean_overlap_1_DMS.intersection(seq_id_clean_overlap_1_2A3)
-    train_data_2A3_1 = train_data_2A3_overlap.loc[train_data_2A3_overlap.sequence_id.isin(seq_id_clean_overlap_1),:]
-    train_data_DMS_1 = train_data_DMS_overlap.loc[train_data_DMS_overlap.sequence_id.isin(seq_id_clean_overlap_1),:]
-    train_data_2A3_N = train_data_2A3_overlap.loc[train_data_2A3_overlap.sequence_id.isin(seq_id_clean_overlap_N_2A3),:]
-    train_data_DMS_N = train_data_DMS_overlap.loc[train_data_DMS_overlap.sequence_id.isin(seq_id_clean_overlap_N_DMS),:]
-    print("Done!")
-    print("Writing to csv...")
-    train_data_2A3_1.to_csv(DATA_FOLDER+"train_data_2A3_1.csv", index=False)
-    train_data_DMS_1.to_csv(DATA_FOLDER+"train_data_DMS_1.csv", index=False)
-    train_data_2A3_N.to_csv(DATA_FOLDER+"train_data_2A3_N.csv", index=False)
-    train_data_DMS_N.to_csv(DATA_FOLDER+"train_data_DMS_N.csv", index=False)
-    print("Done!")
+class RibonanzaDataModule(LightningDataModule):
+    def __init__(
+        self,
+        path, # path to h5torch train file
+        batch_size=16, # batch size for model
+        n_workers=4, # num workers in dataloader
+        split_number = 0, # an integer 0 to 19, indicating which 1/20th (random) fraction of data to use. (for ensembling purposes later)
+        in_memory=True, # whether to use h5torch in-memory mode for more-efficient dataloading
+    ):
+        super().__init__()
+        self.n_workers = n_workers 
+        self.batch_size = batch_size 
+        self.path = path 
+        self.in_memory = in_memory 
+        self.split_number = split_number
 
-if __name__ == "__main__":
-    get_data_seqidcleanoverlap()
+
+    def setup(self, stage):
+        f = h5torch.File(self.path)
+        split_vector = f["0/split"][:]
+        train_indices = split_vector != self.split_number
+        val_indices = split_vector == self.split_number
+
+        self.train = h5torch.Dataset(f, sample_processor=processor, subset=train_indices, in_memory = self.in_memory)
+
+        self.val = h5torch.Dataset(f, sample_processor=processor, subset=val_indices, in_memory = self.in_memory)
+
+        self.test = None # has to still be implemented!
+
+    def train_dataloader(self):
+        return torch.utils.data.DataLoader(
+            self.train,
+            num_workers=self.n_workers,
+            batch_size=self.batch_size,
+            shuffle=True,
+            pin_memory=True,
+            collate_fn=batch_collater,
+        )
+
+    def val_dataloader(self):
+        return torch.utils.data.DataLoader(
+            self.val,
+            num_workers=self.n_workers,
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=True,
+            collate_fn=batch_collater,
+        )
+
+    def test_dataloader(self):
+        return torch.utils.data.DataLoader(
+            self.test,
+            num_workers=self.n_workers,
+            batch_size=self.batch_size,
+            shuffle=False,
+            pin_memory=True,
+            collate_fn=batch_collater,
+        )
+
+    @staticmethod
+    def sample_processor(f, sample):
+        c1 = sample["0/bpp_c1"]
+        c2 = sample["0/bpp_c2"]
+        o = sample["0/bpp_o"]
+        shp = len(sample["0/reactivity_2A3"])
+        bpp = np.zeros((shp, shp))
+        bpp[c1, c2] = o
+        bpp[c2, c1] = o
+        final_sample = {
+            "seq" : sample["0/sequences"],
+            "2A3" : sample["0/reactivity_2A3"],
+            "DMS" : sample["0/reactivity_DMS"],
+            "2A3_e" : sample["0/reactivity_error_2A3"],
+            "DMS_e" : sample["0/reactivity_error_DMS"],
+            "bpp" : bpp,
+            "id" : sample["central"],
+            "s_to_n_2A3" : sample["0/s_to_n_2A3"],
+            "s_to_n_DMS" : sample["0/s_to_n_DMS"],
+            "sn_filter_2A3" : sample["0/sn_filter_2A3"],
+            "sn_filter_DMS" : sample["0/sn_filter_DMS"],
+        }
+        return final_sample
+
+
+def batch_collater(batch):
+    batch_collated = {}
+    keys = list(batch[0])
+    for k in keys:
+        v = [b[k] for b in batch]
+        if isinstance(v[0], str):
+            batch_collated[k] = v
+        elif isinstance(v[0], (int, np.int64)):
+            batch_collated[k] = torch.tensor(v)
+        elif isinstance(v[0], np.ndarray):
+            if len({t.shape for t in v}) == 1:
+                batch_collated[k] = torch.tensor(np.array(v))
+            else:
+                batch_collated[k] = pad_sequence(
+                    [torch.tensor(t) for t in v], batch_first=True, padding_value=-1
+                )
+        elif torch.is_tensor(v[0]):
+            if len({t.shape for t in v}) == 1:
+                batch_collated[k] = torch.stack(v)
+            else:
+                if v[0].dtype == torch.bool:
+                    batch_collated[k] = pad_sequence(
+                        v, batch_first=True, padding_value=False
+                    )
+                else:
+                    batch_collated[k] = pad_sequence(
+                        v, batch_first=True, padding_value=-1
+                    )
+    return batch_collated
