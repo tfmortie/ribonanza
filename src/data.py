@@ -2,6 +2,7 @@ import h5torch
 import numpy as np
 from lightning import LightningDataModule
 import torch
+from torch.nn.utils.rnn import pad_sequence
 """
 Data utilities to use in training scripts
 """
@@ -24,14 +25,15 @@ class RibonanzaDataModule(LightningDataModule):
 
 
     def setup(self, stage):
-        f = h5torch.File(self.path)
+        print("Reading data into memory ...")
+        f = h5torch.File(self.path).to_dict()
         split_vector = f["0/split"][:]
         train_indices = split_vector != self.split_number
         val_indices = split_vector == self.split_number
 
-        self.train = h5torch.Dataset(f, sample_processor=processor, subset=train_indices, in_memory = self.in_memory)
+        self.train = h5torch.Dataset(f, sample_processor=self.sample_processor, subset=train_indices, in_memory = self.in_memory)
 
-        self.val = h5torch.Dataset(f, sample_processor=processor, subset=val_indices, in_memory = self.in_memory)
+        self.val = h5torch.Dataset(f, sample_processor=self.sample_processor, subset=val_indices, in_memory = self.in_memory)
 
         self.test = None # has to still be implemented!
 
