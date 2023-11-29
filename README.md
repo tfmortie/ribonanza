@@ -26,6 +26,14 @@ Code for Stanford Ribonanza RNA Folding Kaggle competition
 - [ ] DNA language model pre-training or not
 - [ ] 
 
+#### Gaetan's (partial) rewrite with h5torch and transformers
+- [x] train data as h5torch
+- [ ] test data as h5torch
+- [ ] pre-train data as h5torch
+- [x] Compatible DataModule
+- [ ] Compatible Transformer Model
+- [ ] Compatible Transformer pre-training Model
+- [ ] Compatible test prediction and submission csv file
 
 #### Gaetan's notes
 
