@@ -1,0 +1,1 @@
+paste -d',' test_DMS.csv test_2A3.csv | awk -F"," -v OFS=',' '{print $1,$2,$4}'
