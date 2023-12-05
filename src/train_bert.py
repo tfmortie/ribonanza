@@ -27,13 +27,13 @@ pos_enc = str(sys.argv[7])
 
 
 size_dict = {
-    "L" : [256, 8],
+    "L" : [512, 12],
     "S" : [64, 4]
 }
 
 dm = RibonanzaBERTDataModule(
     file, # path to h5torch train file
-    batch_size=128, # batch size for model
+    batch_size=64, # batch size for model
     n_workers=8, # num workers in dataloader
     in_memory=False,
     p=0.15,

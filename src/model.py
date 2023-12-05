@@ -14,13 +14,16 @@ class Transformer(pl.LightningModule):
         self,
         dim = 512,
         depth = 12,
-        lr = 1e-4,
         dropout = 0.2,
         loss = "mae",
         weighted = True,
         target = "both",
         use_bpp = True,
         pos_enc = "rotary",
+        lr=1e-4,
+        weight_decay=0,
+        lr_decay_factor=0.95,
+        warmup_steps=500,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -57,6 +60,9 @@ class Transformer(pl.LightningModule):
 
         self.loss = Loss(norm = (1 if loss=="mae" else 2), weighted = weighted)
         self.lr = lr
+        self.weight_decay = weight_decay
+        self.lr_decay_factor = lr_decay_factor
+        self.warmup_steps = warmup_steps
         self.target = target
         self.mae = Loss(norm = 1, weighted = False)
 
@@ -139,9 +145,28 @@ class Transformer(pl.LightningModule):
 
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=self.lr)
+        optimizer = optim.Adam(
+            self.parameters(),
+            lr=self.lr,
+            weight_decay=self.weight_decay,
+        )
+        lambd = lambda epoch: self.lr_decay_factor
+        lr_scheduler = optim.lr_scheduler.MultiplicativeLR(
+            optimizer, lr_lambda=lambd
+        )
+        return [optimizer], [lr_scheduler]
 
-        return optimizer
+    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure=None):
+        # warm up lr
+        if self.trainer.global_step < self.warmup_steps:
+            lr_scale = min(
+                1.0, float(self.trainer.global_step + 1) / self.warmup_steps
+            )
+            for pg in optimizer.param_groups:
+                pg["lr"] = lr_scale * self.lr
+
+        # update params
+        optimizer.step(closure=optimizer_closure)
 
 class Loss(nn.Module):
     def __init__(self, norm=1, weighted = True):
