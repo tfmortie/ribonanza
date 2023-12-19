@@ -35,11 +35,13 @@ Code for Stanford Ribonanza RNA Folding Kaggle competition
 - [ ] Compatible Transformer pre-training Model
 - [ ] Compatible test prediction and submission csv file
 
+A faster way to merge predictions: `paste -d',' test_DMS.csv test_2A3.csv | awk -F"," -v OFS=',' '{print $1,$2,$4}'`
+
 #### Gaetan's notes
 
 - [ ] it appears a new version of the [data](https://www.kaggle.com/competitions/stanford-ribonanza-rna-folding/data) is available.
-- [ ] `reactivity_error`: Ideas to use: (1) Model a distribution instead of point estimates (concern: will this really help MAE performance?), (2) Use to weigh loss function?, (3) sample labels according to dist?
-- [ ] Signal to noise: Ideas to use: pre-train a model using all data and then fine-tune on SN-filtered-only data?
+- [x] `reactivity_error`: Ideas to use: (1) Model a distribution instead of point estimates (concern: will this really help MAE performance?), (2) Use to weigh loss function?, (3) sample labels according to dist?
+- [] Signal to noise: Ideas to use: pre-train a model using all data and then fine-tune on SN-filtered-only data?
 - [ ] I counted: all sequence ids are repeated in `train_data.csv`, meaning that every sequence has labels for both targets. Train a multi-output regression model? (concern: Will a single model be better than two "specialized ones"?)
 - [ ] `Ribonanza_bpp_files`: Is information on basepair interaction ==> add to attention matrix?
 - [ ] `eterna_openknot_metadata`: See below

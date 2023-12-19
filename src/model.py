@@ -3,226 +3,304 @@ Code containing different model architectures and corresponding Lightning module
 """
 import torch
 import lightning.pytorch as pl
-
 from torch import optim, nn
-from utils import masked_mae, masked_mse_loss
+import torch.nn.functional as F
+from bio_attention.attention import TransformerEncoder
+from bio_attention.embed import DiscreteEmbedding
+from einops import rearrange, repeat
 
-class MTM(nn.Module):
-    def __init__(self, embedding_dim, n_hidden1, n_hidden2, n_out):
-        super().__init__()
-        self.embedding = nn.Embedding(5, embedding_dim)        
-        self.fc = nn.Sequential(
-            nn.Linear(embedding_dim*n_out, n_hidden1),
-            nn.ReLU(),
-            nn.BatchNorm1d(n_hidden1),
-            nn.Linear(n_hidden1, n_hidden2),
-            nn.ReLU(),
-            nn.BatchNorm1d(n_hidden2),
-            nn.Linear(n_hidden2, n_out),
-            nn.ReLU()
-        )
-        # ok as long as we don't have high-capacity models
-        self.double()
-    
-    def forward(self, x):
-        e = self.embedding(x)
-        e = e.view(e.size(0), -1)
-        o = self.fc(e)
-
-        return o
-
-
-class Permute(nn.Module):
-    def __init__(self, *args):
-        super().__init__()
-        self.args = args
-
-    def forward(self, x):
-        return x.permute(*self.args)
-    
-class ConvLayerNorm(nn.Module):
-    def __init__(self, dim, conv1d=True):
-        super().__init__()
-        if conv1d == True:
-            self.norm = nn.Sequential(
-                Permute(0, 2, 1), nn.LayerNorm(dim), Permute(0, 2, 1)
-            )
-        else:
-            self.norm = nn.Sequential(
-                Permute(0, 2, 3, 1), nn.LayerNorm(dim), Permute(0, 3, 1, 2)
-            )
-
-    def forward(self, x):
-        return self.norm(x)
-
-
-class MaskedConvWrapper(nn.Module):
-    def __init__(self, ConvModule):
-        """
-        Works only for Conv1ds that have the same input shape as output shape.
-        """
-        assert isinstance(ConvModule, nn.Conv1d)
-        super().__init__()
-        self.conv = ConvModule
-
-    def forward(self, x, mask=None):
-        if mask is not None:
-            return self.conv(x * mask.unsqueeze(1))
-        else:
-            return self.conv(x)
-
-# code credits: https://github.com/lucidrains/x-transformers
-class GLU(nn.Module):
-    def __init__(self, dim, ff_dim, activation):
-        super().__init__()
-        self.act = activation
-        self.proj = nn.Linear(dim, ff_dim * 2)
-
-    def forward(self, x):
-        x, gate = self.proj(x).chunk(2, dim=-1)
-        return x * self.act(gate)
-
-class ConvNext1DBlock(nn.Module):
+class Transformer(pl.LightningModule):
     def __init__(
         self,
-        dim,
-        kernel_size=7,
-        dropout=0.1,
-        depthwise=True,
-        only_one_residual=True,
-        only_one_norm=True,
-        masked_conv=False,
-        glu_ff=False,
-        activation="gelu",
+        dim = 512,
+        depth = 12,
+        dropout = 0.2,
+        loss = "mae",
+        weighted = True,
+        target = "both",
+        use_bpp = True,
+        pos_enc = "rotary",
+        lr=1e-4,
+        weight_decay=0,
+        lr_decay_factor=0.95,
+        warmup_steps=500,
     ):
         super().__init__()
+        self.save_hyperparameters()
 
-        if activation.lower() == "relu":
-            act = nn.ReLU()
-        elif activation.lower() == "gelu":
-            act = nn.GELU()
-        elif activation.lower() == "swish":
-            act = nn.SiLU()
-
-        self.conv = nn.Conv1d(
-            dim,
-            dim,
-            kernel_size=kernel_size,
-            padding=kernel_size // 2,
-            groups=(dim if depthwise else 1),
-        )
-        if masked_conv:
-            self.conv = MaskedConvWrapper(self.conv)
-
-        self.norm = ConvLayerNorm(dim)
-
-        project_in = (
-            nn.Sequential(nn.Linear(dim, 4 * dim), act)
-            if not glu_ff
-            else GLU(dim, 4 * dim, act)
+        self.embed = DiscreteEmbedding(
+            5,
+            embedding_dim=dim,
+            cls=False
         )
 
-        self.pointwise_net = nn.Sequential(
-            Permute(0, 2, 1),
-            project_in,
-            nn.Dropout(dropout),
-            nn.Linear(4 * dim, dim),
-            Permute(0, 2, 1),
+        if pos_enc == "rotary":
+            plugin_args = {"head_dim" : dim // 8}
+        elif pos_enc == "sinusoidal":
+            plugin_args = {"dim" : dim}
+
+        self.transformer = TransformerEncoder(
+            depth=depth,
+            dim=dim,
+            nh=8,
+            attentiontype="vanilla",
+            attention_args={"dropout": dropout},
+            plugintype=pos_enc,
+            plugin_args=plugin_args,
+            only_apply_plugin_at_first=(False if pos_enc == "rotary" else True),
+            dropout=dropout,
+            glu_ff=True,
+            activation="gelu",
         )
+        self.use_bpp = use_bpp
+        if self.use_bpp:
+            self.mask_net = nn.Sequential(nn.Linear(1, 8), nn.GELU(), nn.Linear(8, 8))
+            
+        self.output_head = nn.Linear(dim, (2 if target == "both" else 1))
 
-        self.one_res = only_one_residual
-        self.one_norm = only_one_norm
-        if not self.one_norm:
-            self.prenorm = ConvLayerNorm(dim)
-
-    def forward(self, x, mask=None):
-        z_inter = x
-        if not self.one_norm:
-            z_inter = self.prenorm(z_inter)
-
-        if isinstance(self.conv, MaskedConvWrapper):
-            z_inter = self.conv(z_inter, mask=mask)
-        else:
-            z_inter = self.conv(z_inter)
-
-        if not self.one_res:
-            z_inter = z_inter + x
-
-        z_ff = self.norm(z_inter)
-        z_ff = self.pointwise_net(z_ff)
-        return z_ff + (x if self.one_res else z_inter)
-
-class Conv1DBaseline(nn.Module):
-    def __init__(self, hdim = 32, n_blocks = 10):
-        super().__init__()
-        self.embedding = nn.Embedding(5, hdim)        
-
-        self.convs = nn.ModuleList([
-            ConvNext1DBlock(
-                hdim,
-                kernel_size=7,
-                dropout=0.2,
-                depthwise=False,
-                only_one_residual=False,
-                only_one_norm=False,
-                glu_ff=True,
-                activation="gelu",
-                masked_conv=True,
-            ) for _ in range(n_blocks)
-        ])
-
-        self.output_head = nn.Linear(hdim, 1)
-
-    
-    def forward(self, x):
-        mask = x != 0 # for use in conv block B, L
-
-        e = self.embedding(x)
-        e = e.permute(0,2,1) # B, L, C -> B, C, L
-
-        for conv in self.convs:
-            e = conv(e, mask = mask) # B, C, L -> B, C, L
-        
-        e = e.permute(0,2,1) # B, C, L -> B, L, C 
-        o = self.output_head(e).squeeze(-1) # B, L, C -> B,L,1 -> B, L
-        return o
-
-class MTMModel(pl.LightningModule):
-    def __init__(self, model, loss = masked_mse_loss, lr = 1e-5):
-        super().__init__()
-        self.model = model
-        self.loss = loss
+        self.loss = Loss(norm = (1 if loss=="mae" else 2), weighted = weighted)
         self.lr = lr
-    
-    def training_step(self, batch, batch_idx):
-        x, y, ye, m = batch # x: sequence, y: reactivity, ye: reactivity error, m: mask
-        x = x.long()
-        y = y.to(self.dtype) # this is my trick to allow for any precision training in lightning
+        self.weight_decay = weight_decay
+        self.lr_decay_factor = lr_decay_factor
+        self.warmup_steps = warmup_steps
+        self.target = target
+        self.mae = Loss(norm = 1, weighted = False)
 
-        z = self.model(x) 
-        if "weighted" in self.loss.__name__:
-            loss = self.loss(z, y, ye, reduction="mean")
+    def forward(self, batch):
+
+        # creating a mask for the transformer to use bpp:
+        mask = batch["seq"] != -1
+        mask = repeat(mask, "... l -> ... (l2) l", l2=mask.shape[-1])
+        if not self.use_bpp:
+            mask = (~mask).to(self.dtype).masked_fill(~mask, -float("inf"))
         else:
-            loss = self.loss(z, y, reduction="mean")
-        self.log("train_loss", loss)
+            bpp = (batch["bpp"][:, :batch["seq"].shape[1], :batch["seq"].shape[1]]).to(self.dtype)
+            bpp = self.mask_net(bpp.unsqueeze(-1))
+            mask = bpp.masked_fill(~mask.unsqueeze(-1), -float("inf"))
+            mask = rearrange(mask, "b l1 l2 h -> b h l1 l2")
+
+        x = self.embed(batch["seq"])
+        y = self.transformer(x, mask = mask, pos = None)
+        return self.output_head(y)
+
+    def training_step(self, batch, batch_idx):
+        y = self(batch)
+        
+        if self.target == "both":
+            targets = torch.stack([batch["2A3"], batch["DMS"]], dim = -1)[:, :y.shape[1]].to(self.dtype)
+            weights = torch.stack([batch["2A3_e"], batch["DMS_e"]], dim = -1)[:, :y.shape[1]].to(self.dtype)
+        else:
+            targets = batch[self.target].unsqueeze(-1)[:, :y.shape[1]].to(self.dtype)
+            weights = batch[self.target+"_e"].unsqueeze(-1)[:, :y.shape[1]].to(self.dtype)
+        
+        loss = self.loss(y, torch.clip(targets, 0, 1), torch.clip(1 / weights, 0, 10))
+
+        self.log("train_loss", loss, sync_dist = True)
 
         return loss
+
 
     def validation_step(self, batch, batch_idx):
-        x, y, ye, m = batch # x: sequence, y: reactivity, ye: reactivity error, m: mask
-        x = x.long()
-        y = y.to(self.dtype)
-
-        z = self.model(x) 
-        if "weighted" in self.loss.__name__:
-            loss = self.loss(z, y, ye, reduction="mean")
+        y = self(batch)
+        
+        if self.target == "both":
+            targets = torch.stack([batch["2A3"], batch["DMS"]], dim = -1)[:, :y.shape[1]].to(self.dtype)
+            weights = torch.stack([batch["2A3_e"], batch["DMS_e"]], dim = -1)[:, :y.shape[1]].to(self.dtype)
         else:
-            loss = self.loss(z, y, reduction="mean")
-        mae = masked_mae(z, y, reduction="mean") 
-        self.log("val_loss", loss)
-        self.log("val_mae", mae)
+            targets = batch[self.target].unsqueeze(-1)[:, :y.shape[1]].to(self.dtype)
+            weights = batch[self.target+"_e"].unsqueeze(-1)[:, :y.shape[1]].to(self.dtype)
+        
+        loss = self.loss(y, torch.clip(targets, 0, 1), torch.clip(1 / weights, 0, 10))
+        mae = self.mae(y, torch.clip(targets, 0, 1), torch.clip(1 / weights, 0, 10))
+        self.log("val_loss", loss, sync_dist = True)
+        self.log("val_mae", mae, sync_dist = True)
 
+    def predict_step(self, batch, batch_idx):
+        y = self(batch)
+        y = torch.clip(y, 0, 1)
+
+        ids = []
+        preds_2A3 = []
+        preds_DMS = []
+        for ix in range(len(y)):
+            id_min = batch["id_min"][ix]
+            id_max = batch["id_max"][ix]
+            id_range_sample = torch.arange(id_min, id_max+1)
+            y_sample = y[ix, :(id_max+1-id_min)]
+
+            ids.append(id_range_sample)
+            if self.target == "both":
+                preds_2A3.append(y_sample[:, 0])
+                preds_DMS.append(y_sample[:, 1])
+            elif self.target == "DMS":
+                preds_DMS.append(y_sample[:, 0])
+            elif self.target == "2A3":
+                preds_2A3.append(y_sample[:, 0])
+        
+        return [
+            torch.cat(ids),
+            (torch.cat(preds_DMS).astype(torch.float32) if len(preds_DMS) > 0 else torch.tensor([])),
+            (torch.cat(preds_2A3).astype(torch.float32) if len(preds_2A3) > 0 else torch.tensor([])),
+        ]
+
+
+    def configure_optimizers(self):
+        optimizer = optim.Adam(
+            self.parameters(),
+            lr=self.lr,
+            weight_decay=self.weight_decay,
+        )
+        lambd = lambda epoch: self.lr_decay_factor
+        lr_scheduler = optim.lr_scheduler.MultiplicativeLR(
+            optimizer, lr_lambda=lambd
+        )
+        return [optimizer], [lr_scheduler]
+
+    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure=None):
+        # warm up lr
+        if self.trainer.global_step < self.warmup_steps:
+            lr_scale = min(
+                1.0, float(self.trainer.global_step + 1) / self.warmup_steps
+            )
+            for pg in optimizer.param_groups:
+                pg["lr"] = lr_scale * self.lr
+
+        # update params
+        optimizer.step(closure=optimizer_closure)
+
+class Loss(nn.Module):
+    def __init__(self, norm=1, weighted = True):
+        super().__init__()
+        self.norm = norm
+        self.weighted = weighted
+
+    def forward(self, input, target, weight):
+        mask = torch.isnan(target)
+        out = torch.abs(input[~mask]-target[~mask])**self.norm
+        if self.weighted:
+            out *= weight[~mask]
+        return out.mean()
+
+
+class RibonanzaBERT(pl.LightningModule):
+    def __init__(
+        self,
+        dim = 512,
+        depth = 12,
+        lr = 1e-4,
+        dropout = 0.2,
+        use_bpp = True,
+        pos_enc = "rotary",
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+
+        self.embed = DiscreteEmbedding(
+            5,
+            embedding_dim=dim,
+            cls=False
+        )
+
+        if pos_enc == "rotary":
+            plugin_args = {"head_dim" : dim // 8}
+        elif pos_enc == "sinusoidal":
+            plugin_args = {"dim" : dim}
+
+        self.transformer = TransformerEncoder(
+            depth=depth,
+            dim=dim,
+            nh=8,
+            attentiontype="vanilla",
+            attention_args={"dropout": dropout},
+            plugintype=pos_enc,
+            plugin_args=plugin_args,
+            only_apply_plugin_at_first=(False if pos_enc == "rotary" else True),
+            dropout=dropout,
+            glu_ff=True,
+            activation="gelu",
+        )
+        self.use_bpp = use_bpp
+        if self.use_bpp:
+            self.mask_net = nn.Sequential(nn.Linear(1, 8), nn.GELU(), nn.Linear(8, 8))
+            
+        self.mask_output_head = nn.Linear(dim, 4)
+        self.struct_output_head = nn.Linear(dim, 3)
+
+        self.lr = lr
+
+    def forward(self, batch):
+        # creating a mask for the transformer to use bpp:
+        mask = batch["seq_masked"] != -1
+        mask = repeat(mask, "... l -> ... (l2) l", l2=mask.shape[-1])
+        if not self.use_bpp:
+            mask = (~mask).to(self.dtype).masked_fill(~mask, -float("inf"))
+        else:
+            bpp = (batch["bpp"][:, :batch["seq_masked"].shape[1], :batch["seq_masked"].shape[1]]).to(self.dtype)
+            bpp = self.mask_net(bpp.unsqueeze(-1))
+            mask = bpp.masked_fill(~mask.unsqueeze(-1), -float("inf"))
+            mask = rearrange(mask, "b l1 l2 h -> b h l1 l2")
+
+        x = self.embed(batch["seq_masked"])
+        y = self.transformer(x, mask = mask, pos = None)
+        return self.mask_output_head(y), self.struct_output_head(y)
+
+    def training_step(self, batch, batch_idx):
+        mlm_preds, struct_preds = self(batch)
+        
+        mlm_loss = F.cross_entropy(mlm_preds[batch["seq_masked"] == 0], batch["seq_orig"][batch["seq_masked"] == 0]-1)
+        
+        struct_indices = batch["structure"] != -1
+        if struct_indices.sum() > 1:
+            struct_loss = F.cross_entropy(struct_preds[struct_indices], batch["structure"][struct_indices])
+        else:
+            struct_loss = struct_preds.sum() * 0 # I would put 0 here but torch multi-gpu mode does not like this.
+        
+        loss = mlm_loss + struct_loss
+        
+        self.log("train_loss", loss, sync_dist = True, batch_size = len(batch["seq_masked"]))
         return loss
+
+
+    def validation_step(self, batch, batch_idx):
+        mlm_preds, struct_preds = self(batch)
+        
+        mlm_loss = F.cross_entropy(mlm_preds[batch["seq_masked"] == 0], batch["seq_orig"][batch["seq_masked"] == 0]-1)
+        
+        struct_indices = batch["structure"] != -1
+        if struct_indices.sum() > 1: # take into account that not every sample has these labels, so a batch may exist that does not have this loss
+            struct_loss = F.cross_entropy(struct_preds[struct_indices], batch["structure"][struct_indices])
+        else:
+            struct_loss = struct_preds.sum() * 0
+        
+        loss = mlm_loss + struct_loss
+
+        self.log(
+            "val_mlm_loss",
+            mlm_loss,
+            on_step=False,
+            on_epoch=True,
+            batch_size=len(batch["seq_masked"]),
+            sync_dist=True,
+            )
+
+        self.log(
+            "val_struct_loss",
+            struct_loss,
+            on_step=False,
+            on_epoch=True,
+            batch_size=len(batch["seq_masked"]),
+            sync_dist=True,
+            )
+
+        self.log(
+            "val_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            batch_size=len(batch["seq_masked"]),
+            sync_dist=True,
+            )
+
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.lr)
